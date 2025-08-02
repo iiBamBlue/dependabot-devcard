@@ -1,7 +1,10 @@
 name: continuous-integration
 
+permissions:
+  contents: read
+
 on:
-  pull_request:
+  pull_request: none
   push:
     branches:
       - main
