@@ -1,0 +1,71 @@
+name: Dependabot Auto-Approve & Merge (DevDependencies Only)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  filter-and-automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Analyze PR changes for devDependencies only
+        id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.data.number
+              }
+            );
+
+            // Only allow PRs that change ONLY package.json and lock files
+            const allowedFiles = ['package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'];
+            const changedFiles = files.map(f => f.filename);
+            const onlyAllowedFiles = changedFiles.every(f => allowedFiles.includes(f));
+            if (!onlyAllowedFiles) {
+              core.setOutput('should-merge', false);
+              return;
+            }
+
+            // Check if patch touches "devDependencies"
+            const pkgFile = files.find(f => f.filename === 'package.json');
+            const patch = pkgFile?.patch || '';
+            const touchesDevDeps = patch.includes('devDependencies');
+            core.setOutput('should-merge', touchesDevDeps);
+
+      - name: Auto-approve the PR
+        if: steps.filter.outputs.should-merge == 'true'
+        uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Enable auto-merge
+        if: steps.filter.outputs.should-merge == 'true'
+        uses: peter-evans/enable-pull-request-automerge@v4
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          merge-method: squash
+
+      - name: Auto-merge PR
+        if: steps.filter.outputs.should-merge == 'true'
+        uses: peter-evans/merge-pull-request@v4
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          merge-method: squash
